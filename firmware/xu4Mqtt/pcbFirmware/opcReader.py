@@ -11,42 +11,30 @@ class OPCN3:
         self.spi = spidev.SpiDev()
         self.spi.open(bus, device)
         self.spi.max_speed_hz = 500000 
-        self.spi.mode = 0b01
-
-    def _transfer(self, command, bytes_to_read):
-        initial_1 = self.spi.xfer2([command])[0]
-        time.sleep(0.01) 
-        initial_2 = self.spi.xfer2([command])[0]
-
-        valid = (initial_1 == 0x31 and initial_2 == 0xF3)
-
-        data = []
-        for _ in range(bytes_to_read):
-            time.sleep(0.00001) 
-            data.append(self.spi.xfer2([command])[0])
-
-        return valid, data
+        self.spi.mode = 1
     
     def set_fan_laser(self, on=True):
-        valid, _ = self._transfer(0x03, 1) 
+        self.spi.xfer2([0x03])
+        time.sleep(0.01)
         if on:
-            self._transfer(0x03, 1) 
-            self._transfer(0x05, 1) 
+            self.spi.xfer2([0x07]) # Fan and Laser ON
         else:
-            self._transfer(0x02, 1)
-            self._transfer(0x04, 1)
-        return valid
+            self.spi.xfer2([0x00]) # Fan and Laser OFF
+        return True
 
     def read_histogram(self):
-        """Reads the entire 86-byte histogram and unpacks all fields"""
-        valid, data = self._transfer(0x30, 86)
-        if not valid:
-            return None
+        """Reads the histogram and unpacks all fields"""
+        self.spi.xfer2([0x30])
+        time.sleep(0.01)
+        
+        # Read 92 bytes to match the struct format used below
+        data = self.spi.xfer2([0x00] * 92)
 
         raw = bytes(data)
+        # Struct requires 92 bytes: 48+8+2+2+20+8+1+1+2 = 92
         parsed = struct.unpack('<24H4HHHfffff4HBBH', raw)
         
-        return valid, parsed
+        return True, parsed
 
     def close(self):
         self.spi.close()
