@@ -27,12 +27,12 @@ class OPCN3:
         self.spi.xfer2([0x30])
         time.sleep(0.01)
         
-        # Read 92 bytes to match the struct format used below
-        data = self.spi.xfer2([0x00] * 92)
+        # Read 86 bytes (Standard OPC-N3 Histogram)
+        data = self.spi.xfer2([0x00] * 86)
 
         raw = bytes(data)
-        # Struct requires 92 bytes: 48+8+2+2+20+8+1+1+2 = 92
-        parsed = struct.unpack('<24H4HHHfffff4HBBH', raw)
+        # Format: 24H (Bins), 4H (MToC), 4H (Period,Flow,Temp,Hum), 3f (PM), 4H (Rejects), H (Checksum)
+        parsed = struct.unpack('<24H4HHHHfff4HH', raw)
         
         return True, parsed
 
@@ -70,8 +70,8 @@ if __name__ == "__main__":
                     ("bin7TimeToCross",      d[27]),
                     ("samplingPeriod",       d[28]),
                     ("sampleFlowRate",       d[29]),
-                    ("temperature",          str(d[30] * 1000)), 
-                    ("humidity",             str(d[31] * 500)),
+                    ("temperature",          str(d[30] / 10.0)), 
+                    ("humidity",             str(d[31] / 10.0)),
                     ("pm1",                  d[32]),
                     ("pm2_5",                d[33]),
                     ("pm10",                 d[34]),
@@ -79,9 +79,7 @@ if __name__ == "__main__":
                     ("rejectCountLongTOF",   d[36]),
                     ("rejectCountRatio",     d[37]),
                     ("rejectCountOutOfRange",d[38]),
-                    ("fanRevCount",          d[39]),
-                    ("laserStatus",          d[40]),
-                    ("checkSum",             d[41])
+                    ("checkSum",             d[39])
                 ])
 
                 print(f"PM2.5: {sensorDictionary['pm2_5']:.2f} | Temp: {d[30]:.1f}C")
