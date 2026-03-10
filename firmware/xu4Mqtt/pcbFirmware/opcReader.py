@@ -12,6 +12,15 @@ class OPCN3:
         self.spi.open(bus, device)
         self.spi.max_speed_hz = 500000 
         self.spi.mode = 1
+        
+    def _wait_for_ready(self, timeout=5):
+        """Polls the sensor until it responds with the 0xF3 ready byte"""
+        start = time.time()
+        while time.time() - start < timeout:
+            if self.spi.xfer2([0x00])[0] == 0xF3:
+                return True
+            time.sleep(0.001)
+        raise TimeoutError("OPC-N3 not ready")
     
     def set_fan_laser(self, on=True):
         self.spi.xfer2([0x03])
@@ -25,14 +34,16 @@ class OPCN3:
     def read_histogram(self):
         """Reads the histogram and unpacks all fields"""
         self.spi.xfer2([0x30])
-        time.sleep(0.01)
+        self._wait_for_ready()  # Poll for 0xF3
         
-        # Read 86 bytes (Standard OPC-N3 Histogram)
         data = self.spi.xfer2([0x00] * 86)
-
         raw = bytes(data)
-        # Format: 24H (Bins), 4H (MToC), 4H (Period,Flow,Temp,Hum), 3f (PM), 4H (Rejects), H (Checksum)
-        parsed = struct.unpack('<24H4HHHHfff4HH', raw)
+
+        # Unpacking data according to the OPC-N3 specification
+        
+        # 48 + 4 + 8 + 12 + 4 + 2 + 1 + 2 = 81 bytes used from 86
+        # indices: 0-23  24-27  28-31  32-34  35-38  39  40  41
+        parsed = struct.unpack('<24H 4B HHHH fff 4B H B H', raw[:81])
         
         return True, parsed
 
@@ -46,44 +57,55 @@ if __name__ == "__main__":
     try:
         opc.set_fan_laser(True)
         time.sleep(2)
-        opc.read_histogram() # Dummy read
+        
+        try:
+            opc.read_histogram() # Dummy read
+        except TimeoutError:
+            print("Initial dummy read timed out. Skipping to main loop...")
+            
         time.sleep(1)
 
         while True:
-            result = opc.read_histogram()
-            if result:
-                valid_bool, d = result
-                dateTime = datetime.datetime.now()
+            try:
+                result = opc.read_histogram()
+                if result:
+                    valid_bool, d = result
+                    dateTime = datetime.datetime.now()
 
-                sensorDictionary = OrderedDict([
-                    ("dateTime", str(dateTime)),
-                    ("valid", "1" if valid_bool else "0"),
-                ])
-                
-                for i in range(24):
-                    sensorDictionary[f"binCount{i}"] = d[i]
-                
-                sensorDictionary.update([
-                    ("bin1TimeToCross",      d[24]),
-                    ("bin3TimeToCross",      d[25]),
-                    ("bin5TimeToCross",      d[26]),
-                    ("bin7TimeToCross",      d[27]),
-                    ("samplingPeriod",       d[28]),
-                    ("sampleFlowRate",       d[29]),
-                    ("temperature",          str(d[30] / 10.0)), 
-                    ("humidity",             str(d[31] / 10.0)),
-                    ("pm1",                  d[32]),
-                    ("pm2_5",                d[33]),
-                    ("pm10",                 d[34]),
-                    ("rejectCountGlitch",    d[35]),
-                    ("rejectCountLongTOF",   d[36]),
-                    ("rejectCountRatio",     d[37]),
-                    ("rejectCountOutOfRange",d[38]),
-                    ("checkSum",             d[39])
-                ])
+                    sensorDictionary = OrderedDict([
+                        ("dateTime", str(dateTime)),
+                        ("valid", "1" if valid_bool else "0"),
+                    ])
+                    
+                    for i in range(24):
+                        sensorDictionary[f"binCount{i}"] = d[i]
+                    
+                    sensorDictionary.update([
+                        ("bin1TimeToCross",      d[24]),
+                        ("bin3TimeToCross",      d[25]),
+                        ("bin5TimeToCross",      d[26]),
+                        ("bin7TimeToCross",      d[27]),
+                        ("samplingPeriod",       d[28]),
+                        ("sampleFlowRate",       d[29]),
+                        ("temperature",          str((d[30] / 10.0) - 273.15)), 
+                        ("humidity",             str(d[31] / 10.0)),
+                        ("pm1",                  d[32]),
+                        ("pm2_5",                d[33]),
+                        ("pm10",                 d[34]),
+                        ("rejectCountGlitch",    d[35]),
+                        ("rejectCountLongTOF",   d[36]),
+                        ("rejectCountRatio",     d[37]),
+                        ("rejectCountOutOfRange",d[38]),
+                        ("fanRevCount",          d[39]),
+                        ("laserStatus",          d[40]),
+                        ("checkSum",             d[41])
+                    ])
 
-                print(f"PM2.5: {sensorDictionary['pm2_5']:.2f} | Temp: {d[30]:.1f}C")
-                mSR.sensorFinisher(dateTime, "OPCN3", sensorDictionary)
+                    print(f"PM2.5: {d[33]:.2f} | Temp: {(d[30]/10.0)-273.15:.1f}C")
+                    mSR.sensorFinisher(dateTime, "OPCN3", sensorDictionary)
+            
+            except TimeoutError as e:
+                print(f"SPI Read Error: {e}")
 
             time.sleep(1)
 
